@@ -22,6 +22,26 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import numpy as np
+import subprocess
+from utils.loss_utils import l1_loss, ssim
+import lpips
+
+
+cmd = 'nvidia-smi -q -d Memory |grep -A4 GPU|grep Used'
+result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE).stdout.decode().split('\n')
+use_gpu = str(np.argmin([int(x.split()[2]) for x in result[:-1]]))
+# 服务器CUDA_DEVICES设备号不对应
+if use_gpu==str(1):
+    use_gpu=str(0)
+elif use_gpu==str(0):
+    use_gpu=str(1)
+os.environ['CUDA_VISIBLE_DEVICES'] = use_gpu
+os.system('echo $CUDA_VISIBLE_DEVICES')
+
+# 初始化LPIPS指标，使用基于VGG的网络
+lpips_fn = lpips.LPIPS(net='vgg').to('cuda')
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
