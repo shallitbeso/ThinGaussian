@@ -26,6 +26,8 @@ import numpy as np
 import subprocess
 from utils.loss_utils import l1_loss, ssim
 import lpips
+import pathlib
+import shutil
 
 
 cmd = 'nvidia-smi -q -d Memory |grep -A4 GPU|grep Used'
@@ -45,8 +47,10 @@ lpips_fn = lpips.LPIPS(net='vgg').to('cuda')
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
+    print("found tf board")
 except ImportError:
     TENSORBOARD_FOUND = False
+    print("not found tf board")
 
 try:
     from fused_ssim import fused_ssim
@@ -59,6 +63,33 @@ try:
     SPARSE_ADAM_AVAILABLE = True
 except:
     SPARSE_ADAM_AVAILABLE = False
+
+
+def saveRuntimeCode(dst: str) -> None:
+
+    additionalIgnorePatterns = ['.git', '.gitignore']
+    ignorePatterns = set()
+    ROOT = '.'
+
+    with open(os.path.join(ROOT, '.gitignore')) as gitIgnoreFile:
+        for line in gitIgnoreFile:
+            if not line.startswith('#'):
+                if line.endswith('\n'):
+                    line = line[:-1]
+                if line.endswith('/'):
+                    line = line[:-1]
+                ignorePatterns.add(line)
+
+    ignorePatterns = list(ignorePatterns)
+    for additionalPattern in additionalIgnorePatterns:
+        ignorePatterns.append(additionalPattern)
+
+    log_dir = pathlib.Path(__file__).parent.resolve()
+
+    shutil.copytree(log_dir, dst, ignore=shutil.ignore_patterns(*ignorePatterns))
+
+    print('Backup Finished!')
+
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
 
