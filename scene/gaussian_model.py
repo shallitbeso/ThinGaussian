@@ -47,7 +47,7 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree, optimizer_type="default"):
+    def __init__(self, sh_degree, optimizer_type="default", feat_dim: int = 64, point_grid: int = 1, point_features_dc: int = 1, point_features_rest: int = 15, point_opacity: int = 1):
         self.active_sh_degree = 0
         self.optimizer_type = optimizer_type
         self.max_sh_degree = sh_degree  
@@ -64,6 +64,25 @@ class GaussianModel:
         self.percent_dense = 0
         self.spatial_lr_scale = 0
         self.setup_functions()
+
+        self.feat_dim = feat_dim
+        self.point_grid = point_grid
+        self.point_features_dc = point_features_dc
+        self.point_features_rest = point_features_rest
+        self.point_opacity = point_opacity
+
+        self.mlp_sampling = nn.Sequential(
+            nn.Linear(self.point_grid + self.point_features_dc + self.point_features_rest + self.point_opacity, feat_dim),
+            nn.ReLU(True),
+            nn.Linear(feat_dim, 1),
+            nn.Sigmoid()
+        )
+
+        def eval(self):
+            self.mlp_sampling.eval()
+
+        def train(self):
+            self.mlp_sampling.train()
 
     def capture(self):
         return (
