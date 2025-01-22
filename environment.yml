@@ -1,6 +1,7 @@
-name: gaussian_splatting
+name: thingaussian
 channels:
   - pytorch
+  - pyg
   - conda-forge
   - defaults
 dependencies:
@@ -18,3 +19,7 @@ dependencies:
     - submodules/fused-ssim
     - opencv-python
     - joblib
+    - wandb
+    - lpips
+    - einops
+    - laspy
