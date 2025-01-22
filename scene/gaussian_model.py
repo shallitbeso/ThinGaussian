@@ -152,6 +152,10 @@ class GaussianModel:
     def get_exposure(self):
         return self._exposure
 
+    @property
+    def get_sampling_mlp(self):
+        return self.mlp_sampling
+
     def get_exposure_from_name(self, image_name):
         if self.pretrained_exposures is None:
             return self._exposure[self.exposure_mapping[image_name]]
@@ -200,22 +204,33 @@ class GaussianModel:
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
 
         l = [
+            # 高斯点可学习参数
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
-            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
+            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
+            # 网络可学习参数
+            {'params': self.mlp_sampling.parameters(), 'lr': training_args.mlp_sampling_lr_init, "name": "mlp_sampling"},
         ]
 
-        if self.optimizer_type == "default":
-            self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-        elif self.optimizer_type == "sparse_adam":
-            try:
-                self.optimizer = SparseGaussianAdam(l, lr=0.0, eps=1e-15)
-            except:
-                # A special version of the rasterizer is required to enable sparse adam
-                self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        # if self.optimizer_type == "default":
+        #     self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        # elif self.optimizer_type == "sparse_adam":
+        #     try:
+        #         self.optimizer = SparseGaussianAdam(l, lr=0.0, eps=1e-15)
+        #     except:
+        #         # A special version of the rasterizer is required to enable sparse adam
+        #         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+
+        # 设置优化器
+        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+
+        self.mlp_sampling_scheduler_args = get_expon_lr_func(lr_init=training_args.mlp_sampling_lr_init,
+                                                    lr_final=training_args.mlp_sampling_lr_final,
+                                                    lr_delay_mult=training_args.mlp_sampling_lr_delay_mult,
+                                                    max_steps=training_args.mlp_sampling_lr_max_steps)
 
         self.exposure_optimizer = torch.optim.Adam([self._exposure])
 
@@ -235,11 +250,18 @@ class GaussianModel:
             for param_group in self.exposure_optimizer.param_groups:
                 param_group['lr'] = self.exposure_scheduler_args(iteration)
 
+        # for param_group in self.optimizer.param_groups:
+        #     if param_group["name"] == "xyz":
+        #         lr = self.xyz_scheduler_args(iteration)
+        #         param_group['lr'] = lr
+        #         return lr
         for param_group in self.optimizer.param_groups:
             if param_group["name"] == "xyz":
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
-                return lr
+            if param_group["name"] == "mlp_sampling":
+                lr = self.mlp_sampling_scheduler_args(iteration)
+                param_group['lr'] = lr
 
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
@@ -490,3 +512,31 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+
+    def save_mlp_checkpoints(self, path, mode='split'):
+        mkdir_p(os.path.dirname(path))  # 创建路径目录
+        if mode == 'split':  # 分开保存各部分模型
+            # 保存sampling MLP
+            self.mlp_sampling.eval()
+            sampling_mlp = torch.jit.trace(
+                self.mlp_sampling, (torch.rand(1, self.point_grid + self.point_features_dc + self.point_features_rest + self.point_opacity, feat_dim).cuda()))
+            sampling_mlp.save(os.path.join(path, 'sampling_mlp.pt'))
+            self.mlp_sampling.train()
+
+        elif mode == 'unite':  # 合并保存为单一文件
+            torch.save({
+                'sampling_mlp': self.mlp_sampling.state_dict(),
+            }, os.path.join(path, 'checkpoints.pth'))
+        else:
+            raise NotImplementedError  # 未实现的保存模式
+
+    def load_mlp_checkpoints(self, path, mode='split'):  # 加载MLP检查点，支持split和unite两种模式
+        if mode == 'split':  # 分开加载各部分模型
+            self.mlp_sampling = torch.jit.load(os.path.join(path, 'sampling_mlp.pt')).cuda()
+
+        elif mode == 'unite':  # 从单一文件加载模型
+            checkpoint = torch.load(os.path.join(path, 'checkpoints.pth'))
+            self.mlp_sampling.load_state_dict(checkpoint['sampling_mlp'])
+
+        else:
+            raise NotImplementedError  # 未实现的加载模式
