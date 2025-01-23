@@ -15,6 +15,15 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
+def generate_mlp_sampling_mask(viewpoint_camera, pc : GaussianModel, visible_mask=None, is_training=False):
+    if visible_mask is None:
+        visible_mask = torch.ones(pc.get_xyz.shape[0], dtype=torch.bool, device=pc.get_xyz.device)
+    
+    grads = pc.xyz_gradient_accum / pc.denom
+    
+
+    
+
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False):
     """
     Render the scene. 
@@ -126,3 +135,51 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         }
     
     return out
+
+def prefilter_mlp(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
+                    override_color=None):
+    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+    try:
+        screenspace_points.retain_grad()
+    except:
+        pass
+
+    # 设置光栅化配置
+    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)  # 计算水平视场角的正切值
+    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)  # 计算垂直视场角的正切值
+
+    # 配置光栅化设置（包括视图矩阵、投影矩阵、背景颜色等）
+    raster_settings = GaussianRasterizationSettings(
+        image_height=int(viewpoint_camera.image_height),  # 渲染图像的高度
+        image_width=int(viewpoint_camera.image_width),  # 渲染图像的宽度
+        tanfovx=tanfovx,  # 水平视场的正切值
+        tanfovy=tanfovy,  # 垂直视场的正切值
+        bg=bg_color,  # 背景颜色
+        scale_modifier=scaling_modifier,  # 缩放因子
+        viewmatrix=viewpoint_camera.world_view_transform,  # 视图矩阵
+        projmatrix=viewpoint_camera.full_proj_transform,  # 投影矩阵
+        sh_degree=1,  # 球面谐波度数
+        campos=viewpoint_camera.camera_center,  # 相机位置
+        prefiltered=False,  # 是否启用预过滤
+        debug=pipe.debug  # 是否处于调试模式
+    )
+
+    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+
+    means3D = pc.get_xyz
+
+    if pipe.compute_cov3D_python:
+        cov3D_precomp = pc.get_covariance(scaling_modifier)
+    else:
+        scales = pc.get_scaling
+        rotations = pc.get_rotation
+    
+    # ！！！
+    radii_pure = rasterizer.visible_filter(
+        means3D=means3D,
+        scales=scales[:, :3],
+        rotations=rotations,
+        cov3D_precomp=cov3D_precomp
+    )
+    
+    return radii_pure > 0

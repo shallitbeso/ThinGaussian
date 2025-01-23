@@ -76,7 +76,7 @@ class GaussianModel:
             nn.ReLU(True),
             nn.Linear(feat_dim, 1),
             nn.Sigmoid()
-        )
+        ).cuda()
 
         def eval(self):
             self.mlp_sampling.eval()
@@ -155,6 +155,18 @@ class GaussianModel:
     @property
     def get_sampling_mlp(self):
         return self.mlp_sampling
+    
+    @property
+    def get_gradient_accum(self):
+        return self.xyz_gradient_accum
+    
+    @property
+    def get_denom(self):
+        return self.denom
+    
+    @property
+    def get_grads(self):
+        return self.xyz_gradient_accum / self.denom
 
     def get_exposure_from_name(self, image_name):
         if self.pretrained_exposures is None:
@@ -372,6 +384,8 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            if 'mlp' in group['name']:
+                continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
@@ -407,6 +421,9 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            if  'mlp' in group['name']:
+                continue
+            # print(group["params"])
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
             stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -519,7 +536,7 @@ class GaussianModel:
             # 保存sampling MLP
             self.mlp_sampling.eval()
             sampling_mlp = torch.jit.trace(
-                self.mlp_sampling, (torch.rand(1, self.point_grid + self.point_features_dc + self.point_features_rest + self.point_opacity, feat_dim).cuda()))
+                self.mlp_sampling, (torch.rand(1, self.point_grid + self.point_features_dc + self.point_features_rest + self.point_opacity).cuda()))
             sampling_mlp.save(os.path.join(path, 'sampling_mlp.pt'))
             self.mlp_sampling.train()
 
