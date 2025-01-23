@@ -19,10 +19,15 @@ def generate_mlp_sampling_mask(viewpoint_camera, pc : GaussianModel, visible_mas
     if visible_mask is None:
         visible_mask = torch.ones(pc.get_xyz.shape[0], dtype=torch.bool, device=pc.get_xyz.device)
     
-    grads = pc.xyz_gradient_accum / pc.denom
-    
+    grads = pc.get_grads[visible_mask]
+    features_dc = pc.get_features_dc[visible_mask]
+    features_rest = pc.get_features_rest[visible_mask]
+    opacities = pc.get_opacity[visible_mask]
 
-    
+    cat_sampling = torch.cat([grads, features_dc, features_rest, opacities], dim=1)
+    mlp_sampling_mask = pc.get_sampling_mlp(cat_sampling)
+    return mlp_sampling_mask == 0
+
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False):
     """

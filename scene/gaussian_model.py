@@ -262,11 +262,6 @@ class GaussianModel:
             for param_group in self.exposure_optimizer.param_groups:
                 param_group['lr'] = self.exposure_scheduler_args(iteration)
 
-        # for param_group in self.optimizer.param_groups:
-        #     if param_group["name"] == "xyz":
-        #         lr = self.xyz_scheduler_args(iteration)
-        #         param_group['lr'] = lr
-        #         return lr
         for param_group in self.optimizer.param_groups:
             if param_group["name"] == "xyz":
                 lr = self.xyz_scheduler_args(iteration)
@@ -507,7 +502,9 @@ class GaussianModel:
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii)
 
-    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, radii):
+    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, radii, visible_mask=None, mlp_sampling=False):
+        if visible_mask is None:
+            visible_mask = torch.ones(self.get_xyz.shape[0], dtype=torch.bool, device=self.get_xyz.device)
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
@@ -520,6 +517,15 @@ class GaussianModel:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+
+        if mlp_sampling:
+            features_dc = self.get_features_dc[visible_mask]
+            features_rest = self.get_features_rest[visible_mask]
+            opacities = self.get_opacity[visible_mask]
+            cat_sampling = torch.cat([grads, features_dc, features_rest, opacities], dim=1)
+            mlp_sampling_mask = self.get_sampling_mlp(cat_sampling)
+            prune_mask = torch.logical_or(prune_mask, mlp_sampling_mask)
+        
         self.prune_points(prune_mask)
         tmp_radii = self.tmp_radii
         self.tmp_radii = None
